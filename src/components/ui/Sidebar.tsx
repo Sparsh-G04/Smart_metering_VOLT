@@ -15,7 +15,6 @@ const navLinks = [
   { href: '/dashboard', label: 'Dashboard Overview', icon: LayoutDashboard },
   { href: '/energy-usage', label: 'Energy Usage & Schedules', icon: BarChart3 },
   { href: '/appliances', label: 'Appliances', icon: Cpu },
-  { href: '/optimization', label: 'Optimization', icon: Sparkles },
   { href: '/insights', label: 'Insights', icon: TrendingUp },
   { href: '/alerts', label: 'Alerts', icon: Bell },
   { href: '/chat', label: 'AI Assistant', icon: MessageSquare },

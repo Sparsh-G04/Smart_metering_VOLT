@@ -6,7 +6,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, Legend,
 } from 'recharts';
-import { Zap, Clock, Sun, Moon, TrendingDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Zap, Clock, Sun, Moon, TrendingDown, ChevronLeft, ChevronRight, Check, ArrowRight, Sparkles, CalendarClock } from 'lucide-react';
+import { useVoltStore } from '@/lib/store';
 
 // Hourly usage data for today
 const hourlyData = Array.from({ length: 24 }, (_, i) => {
@@ -33,39 +34,121 @@ const weeklyData = [
   { day: 'Sun', usage: 13.5, target: 10, cost: 96 },
 ];
 
-// Schedule data
-const scheduleItems = [
-  { time: '05:30 AM', appliance: 'Geyser', duration: '30 min', status: 'completed', tariff: 'sasta', saved: 14 },
-  { time: '06:00 AM', appliance: 'Washing Machine', duration: '45 min', status: 'completed', tariff: 'sasta', saved: 8 },
-  { time: '07:00 AM', appliance: 'Iron', duration: '20 min', status: 'completed', tariff: 'mid', saved: 0 },
-  { time: '09:00 AM', appliance: 'AC', duration: '3 hrs', status: 'active', tariff: 'mid', saved: 0 },
-  { time: '02:00 PM', appliance: 'AC', duration: '4 hrs', status: 'scheduled', tariff: 'peak', saved: 0 },
-  { time: '05:00 PM', appliance: 'Geyser', duration: '20 min', status: 'scheduled', tariff: 'mid', saved: 6 },
-  { time: '09:00 PM', appliance: 'Dishwasher', duration: '1 hr', status: 'optimized', tariff: 'sasta', saved: 12 },
-  { time: '10:00 PM', appliance: 'EV Charging', duration: '4 hrs', status: 'optimized', tariff: 'sasta', saved: 32 },
+// Tariff time slots
+const tariffSlots = [
+  { label: 'Morning', range: '05:00 – 11:00', rate: 7, color: 'text-volt-amber', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
+  { label: 'Afternoon', range: '11:00 – 17:00', rate: 6, color: 'text-volt-green', bg: 'bg-green-500/10', border: 'border-green-500/20' },
+  { label: 'Evening Peak', range: '17:00 – 23:00', rate: 9, color: 'text-volt-red', bg: 'bg-red-500/10', border: 'border-red-500/20' },
+  { label: 'Night Off-Peak', range: '23:00 – 05:00', rate: 5, color: 'text-volt-blue', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
 ];
 
-const statusConfig = {
-  completed: { label: 'Done', color: 'text-gray-400', bg: 'bg-white/10' },
-  active: { label: 'Running', color: 'text-volt-green', bg: 'bg-green-500/10' },
-  scheduled: { label: 'Scheduled', color: 'text-volt-blue', bg: 'bg-blue-500/10' },
-  optimized: { label: 'VoltIQ Optimized', color: 'text-volt-cyan', bg: 'bg-cyan-500/10' },
-};
+// Tariff rates per slot (₹/kWh)
+const tariffRates: { start: number; end: number; rate: number; label: string }[] = [
+  { start: 5, end: 11, rate: 7, label: 'Morning' },
+  { start: 11, end: 17, rate: 6, label: 'Afternoon' },
+  { start: 17, end: 23, rate: 9, label: 'Evening Peak' },
+  { start: 23, end: 5, rate: 5, label: 'Night Off-Peak' },
+];
 
-const tariffColors = {
-  sasta: 'text-volt-green',
-  mid: 'text-volt-amber',
-  peak: 'text-volt-red',
-};
+function formatHour(h: number, m: number = 0): string {
+  const wrapped = ((h % 24) + 24) % 24;
+  return `${wrapped.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+}
+
+function getTariffRate(hour: number): number {
+  const h = ((hour % 24) + 24) % 24;
+  if (h >= 5 && h < 11) return 7;
+  if (h >= 11 && h < 17) return 6;
+  if (h >= 17 && h < 23) return 9;
+  return 5; // 23-5
+}
+
+function parseSchedule(schedule: string): { startH: number; startM: number; endH: number; endM: number; duration: number } {
+  const parts = schedule.split(' – ');
+  if (parts.length < 2) {
+    const [h, m] = parts[0].split(':').map(Number);
+    return { startH: h || 0, startM: m || 0, endH: ((h || 0) + 3) % 24, endM: m || 0, duration: 3 };
+  }
+  const [sH, sM] = parts[0].split(':').map(Number);
+  const [eH, eM] = parts[1].split(':').map(Number);
+  let duration = (eH || 0) - (sH || 0);
+  if (duration <= 0) duration += 24;
+  return { startH: sH || 0, startM: sM || 0, endH: eH || 0, endM: eM || 0, duration: Math.min(duration, 12) };
+}
+
+// Generate optimized schedule: shift to cheapest tariff slot while keeping same duration
+function generateOptimizedSchedule(manualTime: string): string {
+  const { startH, startM, duration } = parseSchedule(manualTime);
+  const currentRate = getTariffRate(startH);
+
+  // Best cheap windows to shift to (sorted cheapest first)
+  const cheapWindows = [
+    { start: 23, rate: 5 },  // Night off-peak ₹5
+    { start: 11, rate: 6 },  // Afternoon ₹6
+    { start: 5, rate: 7 },   // Morning ₹7
+  ];
+
+  for (const window of cheapWindows) {
+    if (window.rate < currentRate) {
+      // Place the appliance at the start of this cheaper window
+      const newStart = window.start;
+      const newEnd = (newStart + duration) % 24;
+      return `${formatHour(newStart, startM)} – ${formatHour(newEnd, startM)}`;
+    }
+  }
+
+  // Already in cheapest slot — keep same
+  return manualTime;
+}
+
+function getScheduleSavings(manualTime: string, kw: number, dailyHours: number): number {
+  const { startH } = parseSchedule(manualTime);
+  const currentRate = getTariffRate(startH);
+  const optimized = generateOptimizedSchedule(manualTime);
+  const { startH: optH } = parseSchedule(optimized);
+  const optRate = getTariffRate(optH);
+  const diff = currentRate - optRate;
+  if (diff <= 0) return 0;
+  return Math.round(kw * dailyHours * diff);
+}
 
 export default function EnergyUsagePage() {
   const [view, setView] = useState<'today' | 'week'>('today');
+  const appliances = useVoltStore(state => state.appliances);
+  const scheduleChoices = useVoltStore(state => state.scheduleChoices);
+  const setScheduleChoice = useVoltStore(state => state.setScheduleChoice);
   const totalToday = hourlyData.reduce((sum, h) => sum + h.usage, 0);
   const peakUsage = hourlyData.filter(h => h.tariff === 'Peak').reduce((s, h) => s + h.usage, 0);
   const sastaUsage = hourlyData.filter(h => h.tariff === 'Sasta').reduce((s, h) => s + h.usage, 0);
 
+  const getChoice = (id: string): 'manual' | 'optimized' => scheduleChoices[id] || 'manual';
+
+  // Build schedule data from appliances
+  const applianceSchedules = appliances.map(app => {
+    const manualTime = app.schedule || `${String(Math.floor(8 + Math.random() * 10)).padStart(2, '0')}:00 – ${String(Math.floor(11 + Math.random() * 10)).padStart(2, '0')}:00`;
+    const optimizedTime = generateOptimizedSchedule(manualTime);
+    const savings = getScheduleSavings(manualTime, app.kw, app.dailyHours);
+    const choice = getChoice(app.id);
+    return {
+      id: app.id,
+      name: app.name,
+      kw: app.kw,
+      dailyHours: app.dailyHours,
+      category: app.category,
+      manualTime,
+      optimizedTime,
+      savings,
+      choice,
+      realTime: choice === 'optimized' ? optimizedTime : manualTime,
+    };
+  });
+
+  const totalSavings = applianceSchedules
+    .filter(a => a.choice === 'optimized')
+    .reduce((sum, a) => sum + a.savings, 0);
+
   return (
-    <div className="ml-[260px] pt-16 min-h-screen">
+    <div className="ml-0 lg:ml-[260px] pt-16 min-h-screen bg-[#0a0f1c]">
       <div className="p-6 lg:p-8 max-w-[1400px]">
         {/* Quick Stats Row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -153,95 +236,144 @@ export default function EnergyUsagePage() {
 
           {/* Tariff zone legend */}
           {view === 'today' && (
-            <div className="flex items-center gap-6 mt-4 pt-4 border-t border-gray-100">
-              {[
-                { label: 'Peak (10–14, 18–22)', color: 'bg-volt-red', rate: '₹8.5/kWh' },
-                { label: 'Mid (6–10, 14–18)', color: 'bg-volt-amber', rate: '₹5.2/kWh' },
-                { label: 'Sasta (22–6)', color: 'bg-volt-green', rate: '₹3.1/kWh' },
-              ].map((zone) => (
+            <div className="flex items-center gap-6 mt-4 pt-4 border-t border-white/5">
+              {tariffSlots.map((zone) => (
                 <div key={zone.label} className="flex items-center gap-2 text-xs text-gray-500">
-                  <div className={`w-3 h-3 rounded-full ${zone.color}`} />
+                  <div className={`w-3 h-3 rounded-full ${zone.bg} border ${zone.border}`} />
                   <span>{zone.label}</span>
-                  <span className="font-semibold text-gray-700">{zone.rate}</span>
+                  <span className={`font-semibold ${zone.color}`}>₹{zone.rate}/kWh</span>
                 </div>
               ))}
             </div>
           )}
         </motion.div>
 
-        {/* Daily Schedule */}
+        {/* ===== 3-COLUMN SCHEDULE SECTION ===== */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="glass-light rounded-2xl p-6"
+          className="glass-light rounded-2xl p-6 mb-8"
         >
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-lg font-bold text-white">Today&apos;s Schedule</h2>
-              <p className="text-sm text-gray-500">Smart scheduling saves you ₹72 today</p>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <CalendarClock className="w-5 h-5 text-volt-cyan" />
+                Appliance Schedules
+              </h2>
+              <p className="text-sm text-gray-500">Compare manual vs optimized schedules and choose what to follow</p>
             </div>
-            <div className="flex items-center gap-2">
-              <button className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/15 flex items-center justify-center">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-sm font-semibold text-white px-3">Today</span>
-              <button className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/15 flex items-center justify-center">
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+            {totalSavings > 0 && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-volt-green/10 border border-volt-green/20 rounded-xl">
+                <Sparkles className="w-4 h-4 text-volt-green" />
+                <span className="text-sm font-bold text-volt-green">Saving ₹{totalSavings}/day with optimized picks</span>
+              </div>
+            )}
           </div>
 
-          <div className="space-y-3">
-            {scheduleItems.map((item, i) => {
-              const status = statusConfig[item.status as keyof typeof statusConfig];
-              return (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.3 + i * 0.05 }}
-                  className={`flex items-center gap-4 p-4 rounded-xl border transition-all hover:shadow-md ${
-                    item.status === 'active' ? 'border-volt-green/30 bg-green-50/30' :
-                    item.status === 'optimized' ? 'border-volt-cyan/30 bg-cyan-50/30' :
-                    'border-gray-100 bg-white'
-                  }`}
-                >
-                  {/* Time */}
-                  <div className="w-20 shrink-0">
-                    <div className="flex items-center gap-1 text-sm font-bold text-white">
-                      <Clock className="w-3.5 h-3.5 text-gray-400" />
-                      {item.time}
+          {appliances.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500 text-sm">Add appliances first to see schedule options</p>
+            </div>
+          ) : (
+            <>
+              {/* Column headers */}
+              <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-3 mb-3 px-2">
+                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Appliance</div>
+                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider text-center">Manual Schedule</div>
+                <div className="text-[10px] font-bold text-volt-cyan uppercase tracking-wider text-center flex items-center justify-center gap-1">
+                  <Sparkles className="w-3 h-3" /> Optimized Schedule
+                </div>
+                <div className="text-[10px] font-bold text-volt-green uppercase tracking-wider text-center">Real Schedule</div>
+              </div>
+
+              {/* Rows */}
+              <div className="space-y-2">
+                {applianceSchedules.map((item, i) => (
+                  <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.3 + i * 0.04 }}
+                    className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-3 items-center"
+                  >
+                    {/* Col 1: Appliance info */}
+                    <div className="flex items-center gap-3 p-3 bg-white/[0.03] rounded-xl">
+                      <div className="w-9 h-9 bg-white/10 rounded-lg flex items-center justify-center shrink-0">
+                        <Zap className="w-4 h-4 text-gray-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white truncate">{item.name}</p>
+                        <p className="text-[10px] text-gray-500">{item.kw} kW · {item.dailyHours}h/day</p>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Appliance */}
-                  <div className="flex-1">
-                    <div className="text-sm font-semibold text-white">{item.appliance}</div>
-                    <div className="text-xs text-gray-400">{item.duration}</div>
-                  </div>
+                    {/* Col 2: Manual Schedule */}
+                    <button
+                      onClick={() => setScheduleChoice(item.id, 'manual')}
+                      className={`p-3 rounded-xl border-2 text-center transition-all cursor-pointer ${
+                        item.choice === 'manual'
+                          ? 'border-volt-blue/50 bg-volt-blue/10 ring-2 ring-volt-blue/20'
+                          : 'border-white/5 bg-white/[0.03] hover:border-white/20'
+                      }`}
+                    >
+                      <p className={`text-sm font-bold ${item.choice === 'manual' ? 'text-volt-blue' : 'text-gray-400'}`}>
+                        {item.manualTime}
+                      </p>
+                      {item.choice === 'manual' && (
+                        <div className="flex items-center justify-center gap-1 mt-1">
+                          <Check className="w-3 h-3 text-volt-blue" />
+                          <span className="text-[10px] text-volt-blue font-semibold">Selected</span>
+                        </div>
+                      )}
+                    </button>
 
-                  {/* Tariff */}
-                  <span className={`text-xs font-bold ${tariffColors[item.tariff as keyof typeof tariffColors]} uppercase`}>
-                    {item.tariff}
-                  </span>
+                    {/* Col 3: Optimized Schedule */}
+                    <button
+                      onClick={() => setScheduleChoice(item.id, 'optimized')}
+                      className={`p-3 rounded-xl border-2 text-center transition-all cursor-pointer ${
+                        item.choice === 'optimized'
+                          ? 'border-volt-cyan/50 bg-volt-cyan/10 ring-2 ring-volt-cyan/20'
+                          : 'border-white/5 bg-white/[0.03] hover:border-white/20'
+                      }`}
+                    >
+                      <p className={`text-sm font-bold ${item.choice === 'optimized' ? 'text-volt-cyan' : 'text-gray-400'}`}>
+                        {item.optimizedTime}
+                      </p>
+                      {item.savings > 0 && (
+                        <span className="text-[10px] text-volt-green font-bold">Save ₹{item.savings}/day</span>
+                      )}
+                      {item.choice === 'optimized' && (
+                        <div className="flex items-center justify-center gap-1 mt-1">
+                          <Check className="w-3 h-3 text-volt-cyan" />
+                          <span className="text-[10px] text-volt-cyan font-semibold">Selected</span>
+                        </div>
+                      )}
+                    </button>
 
-                  {/* Status */}
-                  <span className={`text-xs font-semibold px-3 py-1 rounded-full ${status.bg} ${status.color}`}>
-                    {status.label}
-                  </span>
-
-                  {/* Savings */}
-                  {item.saved > 0 && (
-                    <span className="text-xs font-bold text-volt-green">
-                      +₹{item.saved}
-                    </span>
-                  )}
-                </motion.div>
-              );
-            })}
-          </div>
+                    {/* Col 4: Real Schedule (result) */}
+                    <div className={`p-3 rounded-xl border-2 text-center ${
+                      item.choice === 'optimized'
+                        ? 'border-volt-green/30 bg-volt-green/5'
+                        : 'border-white/10 bg-white/[0.03]'
+                    }`}>
+                      <p className={`text-sm font-bold ${item.choice === 'optimized' ? 'text-volt-green' : 'text-white'}`}>
+                        {item.realTime}
+                      </p>
+                      <div className="flex items-center justify-center gap-1 mt-1">
+                        <ArrowRight className="w-3 h-3 text-gray-500" />
+                        <span className={`text-[10px] font-semibold ${item.choice === 'optimized' ? 'text-volt-green' : 'text-gray-400'}`}>
+                          {item.choice === 'optimized' ? 'Optimized' : 'User Set'}
+                        </span>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </>
+          )}
         </motion.div>
+
       </div>
     </div>
   );

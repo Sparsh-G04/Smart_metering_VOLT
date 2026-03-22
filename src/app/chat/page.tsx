@@ -1,46 +1,108 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Sparkles } from 'lucide-react';
+import { Send, Sparkles, Mic, MicOff } from 'lucide-react';
 import { useVoltStore } from '@/lib/store';
 import { GlassCard } from '@/components/ui/GlassCard';
 
 const quickActions = [
-  { icon: '💡', label: 'Aaj ka bill?', query: 'What is my bill today?' },
-  { icon: '🔥', label: 'Geyser chalu karo', query: 'Turn on geyser' },
-  { icon: '❄️', label: 'AC kyun band?', query: 'Why is AC off?' },
-  { icon: '💰', label: 'Tips do', query: 'Give me savings tips' },
+  { icon: '📋', label: 'Appliance status', query: 'Show appliances' },
+  { icon: '💡', label: 'Turn on Living Room', query: 'Turn on Living Room' },
+  { icon: '🔌', label: 'Turn off Fridge', query: 'Turn off Fridge' },
+  { icon: '📅', label: 'Schedule AC 2-6 PM', query: 'Schedule AC from 2pm to 6pm' },
+  { icon: '💰', label: 'Savings tips', query: 'Give me savings tips' },
+  { icon: '💡', label: 'Today\'s bill', query: 'What is my bill today?' },
 ];
+
+// Extend Window for SpeechRecognition types
+interface SpeechRecognitionEvent {
+  results: { [index: number]: { [index: number]: { transcript: string } } };
+  resultIndex: number;
+}
 
 export default function ChatPage() {
   const { chatMessages, isTyping, sendMessage } = useVoltStore();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Voice state
+  const [isListening, setIsListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const voiceTranscriptRef = useRef('');
+
+  // Check for Speech Recognition support
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      setVoiceSupported(true);
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-IN'; // English (India) for best results
+      recognition.maxAlternatives = 1;
+
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        const lastResult = event.results[Object.keys(event.results).length - 1];
+        const transcript = lastResult[0].transcript;
+        setInput(transcript);
+        voiceTranscriptRef.current = transcript;
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        // Auto-send the final transcript immediately
+        const finalText = voiceTranscriptRef.current.trim();
+        if (finalText) {
+          voiceTranscriptRef.current = '';
+          // Use store directly to avoid React state timing issues
+          const store = useVoltStore.getState();
+          store.sendMessage(finalText);
+          setInput('');
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('[Voice] Recognition error:', event.error);
+        setIsListening(false);
+        voiceTranscriptRef.current = '';
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, isTyping]);
 
+  const welcomeSentRef = useRef(false);
+
   useEffect(() => {
-    // Send welcome message on first load
-    if (chatMessages.length === 0) {
+    if (chatMessages.length === 0 && !welcomeSentRef.current) {
+      welcomeSentRef.current = true;
       const store = useVoltStore.getState();
       store.addBotMessage(
-        '👋 Namaste! I\'m your VoltIQ AI assistant. I can help you with:\n\n• Check today\'s energy usage\n• Control your appliances\n• Get personalized savings tips\n• Understand your bill\n\nWhat would you like to know?'
+        '👋 Namaste! I\'m your VoltIQ AI assistant. I can help you with:\n\n• Control your appliances (voice or text!)\n• Check today\'s energy usage\n• Get personalized savings tips\n• Understand your bill\n\n🎤 Tap the mic button to use voice commands!\nWhat would you like to know?'
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     if (input.trim()) {
+      // Stop listening if active
+      if (isListening && recognitionRef.current) {
+        recognitionRef.current.stop();
+        setIsListening(false);
+      }
       sendMessage(input);
       setInput('');
       inputRef.current?.focus();
     }
-  };
+  }, [input, isListening, sendMessage]);
 
   const handleQuickAction = (query: string) => {
     sendMessage(query);
@@ -50,6 +112,25 @@ export default function ChatPage() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const toggleVoice = () => {
+    if (!recognitionRef.current) return;
+
+    if (isListening) {
+      // Stop listening — onend handler will auto-send the transcript
+      recognitionRef.current.stop();
+    } else {
+      setInput('');
+      voiceTranscriptRef.current = '';
+      setIsListening(true);
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error('[Voice] Failed to start:', e);
+        setIsListening(false);
+      }
     }
   };
 
@@ -68,7 +149,7 @@ export default function ChatPage() {
             </div>
             <div>
               <h1 className="text-2xl font-black text-white">VoltIQ Assistant</h1>
-              <p className="text-sm text-gray-400">AI-powered energy advisor</p>
+              <p className="text-sm text-gray-400">AI-powered energy advisor · Voice enabled 🎤</p>
             </div>
           </div>
         </motion.div>
@@ -82,7 +163,7 @@ export default function ChatPage() {
             className="mb-6 flex-shrink-0"
           >
             <p className="text-sm text-gray-400 mb-3">Quick actions:</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {quickActions.map((action, i) => (
                 <motion.button
                   key={i}
@@ -180,6 +261,37 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Voice listening indicator */}
+        <AnimatePresence>
+          {isListening && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="flex justify-center mb-3"
+            >
+              <div className="flex items-center gap-3 px-5 py-2.5 rounded-full bg-red-500/10 border border-red-500/30">
+                <motion.div
+                  animate={{ scale: [1, 1.3, 1] }}
+                  transition={{ duration: 1.2, repeat: Infinity }}
+                  className="w-3 h-3 rounded-full bg-red-500"
+                />
+                <span className="text-sm text-red-400 font-medium">Listening... Speak now</span>
+                <div className="flex items-center gap-0.5">
+                  {[0, 1, 2, 3, 4].map(i => (
+                    <motion.div
+                      key={i}
+                      animate={{ height: [4, 16, 4] }}
+                      transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.1 }}
+                      className="w-1 bg-red-400 rounded-full"
+                    />
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Input */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -188,14 +300,30 @@ export default function ChatPage() {
           className="flex-shrink-0"
         >
           <GlassCard className="p-3">
-            <div className="flex items-end gap-3">
+            <div className="flex items-end gap-2">
+              {/* Mic button */}
+              {voiceSupported && (
+                <button
+                  onClick={toggleVoice}
+                  disabled={isTyping}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
+                    isListening
+                      ? 'bg-red-500 text-white hover:bg-red-600 animate-pulse shadow-lg shadow-red-500/30'
+                      : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-volt-cyan'
+                  }`}
+                  title={isListening ? 'Stop listening' : 'Start voice input'}
+                >
+                  {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                </button>
+              )}
+
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Ask me anything about your energy usage..."
+                placeholder={isListening ? '🎤 Listening...' : 'Type or tap 🎤 to speak...'}
                 className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 text-sm py-2 px-2"
                 disabled={isTyping}
               />
@@ -215,7 +343,7 @@ export default function ChatPage() {
           </GlassCard>
 
           <p className="text-xs text-gray-500 text-center mt-3">
-            VoltIQ AI is powered by advanced ML models. Responses are generated based on your usage data.
+            🎤 Voice commands supported · VoltIQ AI is powered by advanced ML models
           </p>
         </motion.div>
       </div>

@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/ui/Sidebar";
 import { TopHeader } from "@/components/ui/TopHeader";
 import BottomNav from "@/components/navigation/BottomNav";
 import RouteGuard from "@/components/navigation/RouteGuard";
+import ScheduleChecker from "@/components/ScheduleChecker";
 
 export const metadata: Metadata = {
   title: "VoltIQ — India's Smart Energy Super App",
@@ -23,6 +24,7 @@ export default function RootLayout({
       <body className="font-inter antialiased">
         <Providers>
           <RouteGuard>
+            <ScheduleChecker />
             <Sidebar />
             <TopHeader />
             <main className="pb-20 lg:pb-0">{children}</main>

@@ -135,7 +135,7 @@ export default function DashboardOverview() {
               <p className="text-sm font-semibold leading-tight">₹227 saved</p>
               <p className="text-[10px] text-white/70">this month</p>
             </div>
-            <Link href="/optimization">
+            <Link href="/energy-usage">
               <button className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 hover:scale-105">
                 <Sparkles className="w-4 h-4" />
                 Optimize

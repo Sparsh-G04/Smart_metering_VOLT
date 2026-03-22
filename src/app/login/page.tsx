@@ -7,43 +7,73 @@ import { Zap, Sparkles } from 'lucide-react';
 import PhoneInput from '@/components/auth/PhoneInput';
 import OTPInput from '@/components/auth/OTPInput';
 import DiscomInput from '@/components/auth/DiscomInput';
+import PasswordInput from '@/components/auth/PasswordInput';
 import { useVoltStore } from '@/lib/store';
 
-type Step = 'phone' | 'otp' | 'discom' | 'discomOtp';
+type Step = 'phone' | 'otp' | 'loginPassword' | 'createPassword' | 'discom' | 'discomOtp';
 
 export default function LoginPage() {
   const router = useRouter();
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [step, setStep] = useState<Step>('phone');
   const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
   const [discom, setDiscom] = useState('');
   const [customerId, setCustomerId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [phoneOtp, setPhoneOtp] = useState('');
+  const [discomOtp, setDiscomOtp] = useState('');
   const login = useVoltStore((s) => s.login);
+  const register = useVoltStore((s) => s.register);
 
-  const handleSendOTP = async () => {
+  const handlePhoneSubmit = async () => {
     setLoading(true);
     setError('');
     
     // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     setLoading(false);
-    setStep('otp');
+    if (authMode === 'login') {
+      setStep('loginPassword');
+    } else {
+      setPhoneOtp(Math.floor(100000 + Math.random() * 900000).toString());
+      setStep('otp');
+    }
   };
 
   const handleVerifyOTP = async (otp: string) => {
     setLoading(true);
     setError('');
     
-    // Dummy OTP check
-    if (otp === '123456') {
+    if (otp === phoneOtp) {
       setLoading(false);
-      setStep('discom');
+      setStep('createPassword');
     } else {
       setError('Invalid OTP. Please try again.');
       setLoading(false);
     }
+  };
+
+  const handleLoginSubmit = async () => {
+    setLoading(true);
+    setError('');
+
+    const success = await login(phone, password);
+    if (success) {
+      router.push('/dashboard');
+    } else {
+      setError('Invalid phone number or password.');
+      setLoading(false);
+    }
+  };
+
+  const handleCreatePasswordSubmit = async () => {
+    setLoading(true);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    setLoading(false);
+    setStep('discom');
   };
 
   const handleDiscomSubmit = async () => {
@@ -54,6 +84,7 @@ export default function LoginPage() {
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     setLoading(false);
+    setDiscomOtp(Math.floor(100000 + Math.random() * 900000).toString());
     setStep('discomOtp');
   };
 
@@ -61,13 +92,12 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     
-    // Dummy DISCOM OTP check
-    if (otp === '654321') {
-      const success = await login(phone, otp, discom, customerId);
+    if (otp === discomOtp) {
+      const success = await register(phone, password, discom, customerId);
       if (success) {
         router.push('/dashboard');
       } else {
-        setError('Login failed. Please try again.');
+        setError('Registration failed. Please try again.');
         setLoading(false);
       }
     } else {
@@ -79,12 +109,32 @@ export default function LoginPage() {
   const handleResendOTP = async () => {
     setLoading(true);
     await new Promise(resolve => setTimeout(resolve, 1000));
+    if (step === 'otp') {
+      setPhoneOtp(Math.floor(100000 + Math.random() * 900000).toString());
+    } else if (step === 'discomOtp') {
+      setDiscomOtp(Math.floor(100000 + Math.random() * 900000).toString());
+    }
     setLoading(false);
   };
 
   // Progress indicator
-  const stepIndex = { phone: 0, otp: 1, discom: 2, discomOtp: 3 }[step];
-  const totalSteps = 4;
+  let stepIndex = 0;
+  let totalSteps = 2; // Default for login
+
+  if (authMode === 'login') {
+    stepIndex = step === 'phone' ? 0 : 1;
+    totalSteps = 2;
+  } else {
+    stepIndex = { phone: 0, otp: 1, createPassword: 2, discom: 3, discomOtp: 4, loginPassword: 1 }[step] || 0;
+    totalSteps = 5;
+  }
+
+  const switchMode = (mode: 'login' | 'register') => {
+    setAuthMode(mode);
+    setStep('phone');
+    setError('');
+    setPassword('');
+  };
 
   return (
     <div className="min-h-screen bg-[#0a0f1c] relative overflow-hidden">
@@ -159,6 +209,28 @@ export default function LoginPage() {
             transition={{ delay: 0.3 }}
             className="mb-6"
           >
+            {/* Login / Register Toggle */}
+            {step === 'phone' && (
+              <div className="flex bg-white/5 p-1 rounded-xl mb-6">
+                <button
+                  onClick={() => switchMode('login')}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                    authMode === 'login' ? 'bg-volt-cyan text-gray-900 shadow-lg' : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => switchMode('register')}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                    authMode === 'register' ? 'bg-volt-cyan text-gray-900 shadow-lg' : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Create Account
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center justify-between mb-2 px-1">
               <span className="text-xs text-gray-500">
                 Step {stepIndex + 1} of {totalSteps}
@@ -166,6 +238,8 @@ export default function LoginPage() {
               <span className="text-xs text-volt-cyan font-medium">
                 {step === 'phone' && 'Phone Number'}
                 {step === 'otp' && 'Phone Verification'}
+                {step === 'createPassword' && 'Create Password'}
+                {step === 'loginPassword' && 'Enter Password'}
                 {step === 'discom' && 'DISCOM Details'}
                 {step === 'discomOtp' && 'DISCOM Verification'}
               </span>
@@ -187,8 +261,32 @@ export default function LoginPage() {
                 key="phone"
                 value={phone}
                 onChange={setPhone}
-                onSubmit={handleSendOTP}
+                onSubmit={handlePhoneSubmit}
                 loading={loading}
+              />
+            )}
+
+            {step === 'loginPassword' && (
+              <PasswordInput
+                key="loginPassword"
+                value={password}
+                onChange={setPassword}
+                onSubmit={handleLoginSubmit}
+                onBack={() => setStep('phone')}
+                loading={loading}
+                isCreate={false}
+              />
+            )}
+
+            {step === 'createPassword' && (
+              <PasswordInput
+                key="createPassword"
+                value={password}
+                onChange={setPassword}
+                onSubmit={handleCreatePasswordSubmit}
+                onBack={() => setStep('otp')}
+                loading={loading}
+                isCreate={true}
               />
             )}
 
@@ -201,7 +299,7 @@ export default function LoginPage() {
                 onBack={() => setStep('phone')}
                 loading={loading}
                 title="Verify Phone Number"
-                dummyOtp="123456"
+                dummyOtp={phoneOtp}
               />
             )}
 
@@ -227,7 +325,7 @@ export default function LoginPage() {
                 loading={loading}
                 title="DISCOM Verification"
                 subtitle={`OTP sent by ${discom} to Customer ID ${customerId}`}
-                dummyOtp="654321"
+                dummyOtp={discomOtp}
               />
             )}
           </AnimatePresence>

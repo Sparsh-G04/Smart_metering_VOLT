@@ -1,8 +1,9 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Building2, Hash } from 'lucide-react';
-import { useState } from 'react';
+import { Building2, Hash, UploadCloud, CheckCircle2 } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { extractBillData } from '@/lib/extractBillData';
 
 interface DiscomInputProps {
   discom: string;
@@ -35,12 +36,42 @@ export default function DiscomInput({
   loading,
 }: DiscomInputProps) {
   const [touched, setTouched] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canSubmit = discom.length > 0 && customerId.length >= 6 && !loading;
+  const canSubmit = discom.length > 0 && customerId.length >= 6 && !loading && !extracting;
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && canSubmit) {
       onSubmit();
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setExtracting(true);
+    setUploadSuccess(false);
+
+    try {
+      const data = await extractBillData(file);
+      if (data.discom) onDiscomChange(data.discom);
+      if (data.customerId) onCustomerIdChange(data.customerId);
+      
+      if (data.discom || data.customerId) {
+        setUploadSuccess(true);
+        setTimeout(() => setUploadSuccess(false), 3000);
+      } else {
+        alert('Could not auto-detect details. Please enter manually.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to extract data from bill. Please enter manually.');
+    } finally {
+      setExtracting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -62,6 +93,51 @@ export default function DiscomInput({
             <p className="text-sm text-gray-400">
               Choose your electricity distribution company
             </p>
+          </div>
+        </div>
+
+        {/* Upload Bill Auto-fill Section */}
+        <div className="mb-6">
+          <div 
+            className={`relative border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+              extracting ? 'border-volt-cyan bg-volt-cyan/5' : 
+              uploadSuccess ? 'border-volt-green bg-volt-green/5' : 
+              'border-white/20 hover:border-volt-cyan/50 hover:bg-white/5 cursor-pointer'
+            }`}
+            onClick={() => !extracting && fileInputRef.current?.click()}
+          >
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileUpload} 
+              accept=".pdf,image/png,image/jpeg,image/jpg" 
+              className="hidden" 
+            />
+            {extracting ? (
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 border-2 border-volt-cyan border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm text-volt-cyan font-medium">Extracting details from bill...</p>
+              </div>
+            ) : uploadSuccess ? (
+              <div className="flex flex-col items-center gap-2">
+                <CheckCircle2 className="w-8 h-8 text-volt-green" />
+                <p className="text-sm text-volt-green font-medium">Successfully extracted details!</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center mb-2">
+                  <UploadCloud className="w-5 h-5 text-volt-cyan" />
+                </div>
+                <p className="text-sm font-medium text-white">Upload Electricity Bill to Auto-fill</p>
+                <p className="text-xs text-gray-500">Supports PDF, PNG, JPG</p>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex items-center gap-4 my-6">
+            <div className="flex-1 h-px bg-white/10" />
+            <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">OR ENTER MANUALLY</span>
+            <div className="flex-1 h-px bg-white/10" />
           </div>
         </div>
 
